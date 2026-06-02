@@ -10,6 +10,8 @@ from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.utils import get_column_letter
 
 # ── Clasificación de servicios ───────────────────────────────────────────────
+import re as _re
+
 SERVICIOS_INDIVIDUAL = ["fisioterapia", "pilates individual", "fisioactividad"]
 SERVICIOS_DUO        = ["dúo pilates", "duo pilates", "dúo fisioactividad", "duo fisioactividad"]
 SERVICIO_FISIO_ECO   = "fisioterapia manual, invasiva y ecográfica"
@@ -22,22 +24,25 @@ SERVICIOS_EXCLUIR = [
     "reunión cliente", "reunion cliente",
 ]
 
-# Capacidades por servicio para hoja Sesiones
-CAPACIDADES = {
-    "pilates studio": 5,
-    "pilates terapéutico": 5,
-    "pilates terapeutico": 5,
-    "ejercicio terapéutico": 6,
-    "ejercicio terapeutico": 6,
-    "acondicionamiento físico": 6,
-    "acondicionamiento fisico": 6,
-    "dúo pilates": 2,
-    "duo pilates": 2,
-    "dúo fisioactividad": 2,
-    "duo fisioactividad": 2,
-}
-CAP_TALLER   = 15
-CAP_DEFAULT  = 1
+# Capacidades — misma lógica que skills/scripts/capacidad_servicio.py
+_CAP_REGLAS = [
+    (15, ["taller"]),
+    (10, ["oncológico", "oncologico", "aecc"]),
+    (5,  ["pilates studio", "pilates terapéutico", "pilates terapeutico"]),
+    (6,  ["ejercicio terapéutico", "ejercicio terapeutico", "acondicionamiento"]),
+    (2,  ["dúo", "duo"]),
+    (1,  ["fisioterapia", "pilates individual", "fisioactividad",
+          "reevaluación", "reevaluacion", "valoración", "valoracion",
+          "suelo pélvico", "suelo pelvico"]),
+]
+CAP_DEFAULT = 1
+
+
+def _limpiar(nombre: str) -> str:
+    """Elimina emojis y normaliza a minúsculas."""
+    limpio = _re.sub(r"[^\w\s\-áéíóúüñàèìòùâêîôûäëïöüç,./()]", "", nombre,
+                     flags=_re.IGNORECASE | _re.UNICODE)
+    return limpio.lower().strip()
 
 MESES_ES = {1:"enero",2:"febrero",3:"marzo",4:"abril",5:"mayo",6:"junio",
             7:"julio",8:"agosto",9:"septiembre",10:"octubre",11:"noviembre",12:"diciembre"}
@@ -77,12 +82,11 @@ def _tipo_servicio(servicio):
 
 
 def _capacidad(servicio):
-    s = _norm(servicio)
-    if "taller" in s:
-        return CAP_TALLER
-    for key, cap in CAPACIDADES.items():
-        if key in s:
-            return cap
+    limpio = _limpiar(str(servicio))
+    for cap, claves in _CAP_REGLAS:
+        for clave in claves:
+            if clave in limpio:
+                return cap
     return CAP_DEFAULT
 
 
@@ -428,12 +432,43 @@ def exportar_excel(resultado: dict) -> bytes:
         if not df_sesiones.empty:
             df_sesiones.to_excel(writer, sheet_name="Sesiones", index=False)
 
-    # Aplicar estilos
+    # Aplicar estilos y conversión de fechas
     wb = openpyxl.load_workbook(output)
+    for ws_name in wb.sheetnames:
+        _convertir_fechas_horas(wb[ws_name])
     _aplicar_estilos(wb, df_main)
     out2 = BytesIO()
     wb.save(out2)
     return out2.getvalue()
+
+
+def _convertir_fechas_horas(ws):
+    """Convierte celdas de Fecha (string DD/MM/YYYY) y Hora (HH:MM) a objetos datetime/time."""
+    from datetime import datetime as dt, time as tm
+    headers = [c.value for c in ws[1]]
+    for i, h in enumerate(headers, 1):
+        col_l = get_column_letter(i)
+        if h == "Fecha":
+            for cell in ws[col_l][1:]:
+                v = cell.value
+                if isinstance(v, str) and v:
+                    try:
+                        cell.value = dt.strptime(v, "%d/%m/%Y")
+                        cell.number_format = "DD-MM-YYYY"
+                    except ValueError:
+                        pass
+                elif hasattr(v, 'strftime'):
+                    cell.number_format = "DD-MM-YYYY"
+        elif h == "Hora" or h == "Sesión":
+            for cell in ws[col_l][1:]:
+                v = cell.value
+                if isinstance(v, str) and v:
+                    try:
+                        parts = v.split(":")
+                        cell.value = tm(int(parts[0]), int(parts[1]))
+                        cell.number_format = "HH:MM"
+                    except (ValueError, IndexError):
+                        pass
 
 
 def _aplicar_estilos(wb, df_main):
