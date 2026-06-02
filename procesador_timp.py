@@ -80,7 +80,10 @@ def _capacidad(servicio):
     s = _norm(servicio)
     if "taller" in s:
         return CAP_TALLER
-    return CAPACIDADES.get(s, CAP_DEFAULT)
+    for key, cap in CAPACIDADES.items():
+        if key in s:
+            return cap
+    return CAP_DEFAULT
 
 
 # ── Lectura ───────────────────────────────────────────────────────────────────
